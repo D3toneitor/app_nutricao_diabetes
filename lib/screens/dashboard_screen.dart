@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../app_state.dart';
 import '../data.dart';
+import '../models.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
 import '../widgets/confetti.dart';
@@ -12,6 +13,8 @@ import '../nutrition.dart';
 class DashboardScreen extends StatelessWidget {
   const DashboardScreen({super.key, required this.state});
   final AppState state;
+
+  static const _goalKcal = 1880;
 
   @override
   Widget build(BuildContext context) => Stack(
