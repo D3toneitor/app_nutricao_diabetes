@@ -22,6 +22,7 @@ class _AuthScreenState extends State<AuthScreen> {
   final birth = TextEditingController();
   final city = TextEditingController();
   final password = TextEditingController();
+  final confirm = TextEditingController();
   String role = 'patient';
   bool terms = false;
   bool loading = false;
@@ -88,8 +89,6 @@ class _AuthScreenState extends State<AuthScreen> {
   }
 
   void _forgot() {
-    final ctl = TextEditingController();
-    var sent = false;
     showDialog<void>(
       context: context,
       builder: (ctx) => StatefulBuilder(
@@ -137,8 +136,9 @@ class _AuthScreenState extends State<AuthScreen> {
             ],
           ],
         ),
+        actions: [FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('Entendi'))],
       ),
-    ).whenComplete(ctl.dispose);
+    );
   }
 
   @override
