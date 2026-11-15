@@ -36,6 +36,7 @@ class FoodLog {
     this.fat = 0,
     this.tacoId,
     this.grams,
+    this.replaces,
   });
   final int id;
   final String meal;
@@ -48,6 +49,7 @@ class FoodLog {
   final double fat; // g
   final int? tacoId; // id do alimento na TACO
   final double? grams; // quantidade em gramas
+  final String? replaces; // item da dieta que este registro substituiu
   Map<String, dynamic> toJson() => {
     'id': id,
     'meal': meal,
@@ -60,6 +62,7 @@ class FoodLog {
     'fat': fat,
     'tacoId': tacoId,
     'grams': grams,
+    'replaces': replaces,
   };
   factory FoodLog.fromJson(Map<String, dynamic> j) => FoodLog(
     id: j['id'] as int,
@@ -73,6 +76,7 @@ class FoodLog {
     fat: (j['fat'] as num?)?.toDouble() ?? 0,
     tacoId: j['tacoId'] as int?,
     grams: (j['grams'] as num?)?.toDouble(),
+    replaces: j['replaces'] as String?,
   );
 }
 

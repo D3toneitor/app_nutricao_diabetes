@@ -1,8 +1,11 @@
 import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
 import 'data.dart';
 import 'models.dart';
+import 'auth_service.dart';
 
 enum Role { patient, nutritionist }
 
@@ -43,14 +46,25 @@ class AppState extends ChangeNotifier {
   // ---- Perfis e configurações ----
   final Map<Role, ProfileInfo> profiles = {
     Role.patient: const ProfileInfo(
-      name: 'Marina Costa', email: 'marina.costa@email.com', phone: '(11) 98765-4321',
-      birthDate: '14 de setembro de 1988', city: 'São Paulo, SP',
-      detail1: '1,67 m', detail2: '72,4 kg', detail3: '68 kg', diabetes: 'Diabetes Tipo 2',
+      name: 'Marina Costa',
+      email: 'marina.costa@email.com',
+      phone: '(11) 98765-4321',
+      birthDate: '14 de setembro de 1988',
+      city: 'São Paulo, SP',
+      detail1: '1,67 m',
+      detail2: '72,4 kg',
+      detail3: '68 kg',
+      diabetes: 'Diabetes Tipo 2',
     ),
     Role.nutritionist: const ProfileInfo(
-      name: 'Dra. Ana Lima', email: 'ana.lima@equilibra.com', phone: '(11) 98765-4321',
-      birthDate: '08 de abril de 1985', city: 'São Paulo, SP',
-      detail1: '12345', detail2: 'Nutrição clínica', detail3: 'Seg a Sex, 08h às 18h',
+      name: 'Dra. Ana Lima',
+      email: 'ana.lima@equilibra.com',
+      phone: '(11) 98765-4321',
+      birthDate: '08 de abril de 1985',
+      city: 'São Paulo, SP',
+      detail1: '12345',
+      detail2: 'Nutrição clínica',
+      detail3: 'Seg a Sex, 08h às 18h',
     ),
   };
   final Map<String, Map<String, bool>> settings = {
@@ -61,9 +75,23 @@ class AppState extends ChangeNotifier {
   ProfileInfo get profile => profiles[role]!;
 
   // ---- Ações: sessão ----
-  void authenticate(Role r, {bool creating = false, String name = '', String email = '', String phone = '', String birthDate = '', String city = ''}) {
+  void authenticate(
+    Role r, {
+    bool creating = false,
+    String name = '',
+    String email = '',
+    String phone = '',
+    String birthDate = '',
+    String city = '',
+  }) {
     if (creating) {
-      profiles[r] = profiles[r]!.copyWith(name: name, email: email, phone: phone, birthDate: birthDate, city: city);
+      profiles[r] = profiles[r]!.copyWith(
+        name: name,
+        email: email,
+        phone: phone,
+        birthDate: birthDate,
+        city: city,
+      );
     }
     role = r;
     tab = 0;
@@ -72,6 +100,7 @@ class AppState extends ChangeNotifier {
   }
 
   void logout() {
+    AuthService.signOut();
     authenticated = false;
     role = Role.patient;
     tab = 0;
@@ -79,14 +108,121 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  void setRole(Role r) { role = r; tab = 0; messageTarget = ''; notifyListeners(); }
-  void setTab(int i) { tab = i; messageTarget = ''; notifyListeners(); }
+  void setRole(Role r) {
+    role = r;
+    tab = 0;
+    messageTarget = '';
+    notifyListeners();
+  }
+
+  void setTab(int i) {
+    tab = i;
+    messageTarget = '';
+    notifyListeners();
+  }
 
   /// Abre a aba Mensagens já na conversa com [name].
   void openChat(String name) {
     messageTarget = name;
     tab = role == Role.patient ? 3 : 1;
     notifyListeners();
+  }
+
+  // ---- Ações: conta (Supabase) ----
+  /// Cria a conta. Com o Supabase configurado, cria de verdade; senão, cadastro local (como antes).
+  Future<AuthResult> signUp(
+    Role r, {
+    required String name,
+    required String email,
+    required String password,
+    String phone = '',
+    String birthDate = '',
+    String city = '',
+  }) async {
+    debugPrint(
+      '[Auth] signUp chamado. Supabase ${AuthService.enabled ? 'LIGADO' : 'DESLIGADO (cadastro só local, nada vai ao Supabase)'}',
+    );
+    if (!AuthService.enabled) {
+      authenticate(
+        r,
+        creating: true,
+        name: name,
+        email: email,
+        phone: phone,
+        birthDate: birthDate,
+        city: city,
+      );
+      return const AuthResult(ok: true);
+    }
+    final res = await AuthService.signUp(
+      email: email,
+      password: password,
+      name: name,
+      role: r == Role.patient ? 'paciente' : 'nutricionista',
+      phone: phone,
+      birthDate: birthDate,
+      city: city,
+    );
+    if (res.ok && !res.needsConfirmation) {
+      authenticate(
+        r,
+        creating: true,
+        name: name,
+        email: email,
+        phone: phone,
+        birthDate: birthDate,
+        city: city,
+      );
+    }
+    return res;
+  }
+
+  /// Entra na conta. O papel (paciente/nutricionista) vem do banco; [fallbackRole] só vale sem Supabase.
+  Future<AuthResult> signIn({
+    required String email,
+    required String password,
+    Role? fallbackRole,
+  }) async {
+    debugPrint(
+      '[Auth] signIn chamado. Supabase ${AuthService.enabled ? 'LIGADO' : 'DESLIGADO (login só local)'}',
+    );
+    if (!AuthService.enabled) {
+      authenticate(fallbackRole ?? role);
+      return const AuthResult(ok: true);
+    }
+    final res = await AuthService.signIn(email: email, password: password);
+    if (res.ok) await _applyPerfil(fallbackRole ?? role);
+    return res;
+  }
+
+  /// Chamar no main(): confere se ainda existe sessão no Supabase.
+  Future<void> syncSession() async {
+    if (!AuthService.enabled) return;
+    if (!AuthService.hasSession) {
+      if (authenticated) {
+        authenticated = false;
+        notifyListeners();
+      }
+      return;
+    }
+    await _applyPerfil(role);
+  }
+
+  Future<void> _applyPerfil(Role fallback) async {
+    final p = await AuthService.loadPerfil();
+    var r = fallback;
+    if (p != null) {
+      r = p['papel'] == 'nutricionista' ? Role.nutritionist : Role.patient;
+      String? nz(Object? v) => (v is String && v.trim().isNotEmpty) ? v : null;
+      profiles[r] = profiles[r]!.copyWith(
+        name: nz(p['nome']),
+        email: nz(p['email']),
+        phone: nz(p['telefone']),
+        birthDate: nz(p['data_nascimento']),
+        city: nz(p['cidade']),
+      );
+    }
+    authenticate(r);
   }
 
   // ---- Ações: paciente ----
@@ -97,21 +233,67 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  void endConfetti() { confetti = false; notifyListeners(); }
+  void endConfetti() {
+    confetti = false;
+    notifyListeners();
+  }
 
-  void addFood(FoodLog f) { foodLogs.add(f); notifyListeners(); }
-  void addGlucose(GlucoseLog g) { glucoseLogs.insert(0, g); notifyListeners(); }
-  void addMedication(Medication m) { medications.add(m); notifyListeners(); }
-  void removeMedication(int id) { medications.removeWhere((m) => m.id == id); notifyListeners(); }
-  void saveNotif(NotificationPrefs p) { notif = p.copy(); notifyListeners(); }
+  /// Registra água em mL (ex.: 250). `water` continua guardado em litros.
+  void addWaterMl(int ml) {
+    final before = water;
+    water = double.parse((water + ml / 1000).toStringAsFixed(3));
+    if (before < 2.5 && water >= 2.5) confetti = true;
+    notifyListeners();
+  }
+
+  void addFood(FoodLog f) {
+    foodLogs.add(f);
+    notifyListeners();
+  }
+
+  /// Exclui um alimento já registrado (ex.: registrou errado).
+  void removeFood(int id) {
+    foodLogs.removeWhere((f) => f.id == id);
+    notifyListeners();
+  }
+
+  void addGlucose(GlucoseLog g) {
+    glucoseLogs.insert(0, g);
+    notifyListeners();
+  }
+
+  void addMedication(Medication m) {
+    medications.add(m);
+    notifyListeners();
+  }
+
+  void removeMedication(int id) {
+    medications.removeWhere((m) => m.id == id);
+    notifyListeners();
+  }
+
+  void saveNotif(NotificationPrefs p) {
+    notif = p.copy();
+    notifyListeners();
+  }
 
   // ---- Ações: nutricionista ----
-  void addPatient(Patient p) { patients.add(p); notifyListeners(); }
+  void addPatient(Patient p) {
+    patients.add(p);
+    notifyListeners();
+  }
 
   /// Dieta do paciente (se ainda não foi editada, usa o plano padrão).
   Map<String, DietEntry> dietFor(int patientId) =>
       _diets[patientId] ??
-      {for (final m in meals) m.key: DietEntry(time: m.time, title: m.title, items: m.items.join('\n'))};
+      {
+        for (final m in meals)
+          m.key: DietEntry(
+            time: m.time,
+            title: m.title,
+            items: m.items.join('\n'),
+          ),
+      };
 
   void saveDiet(int patientId, Map<String, DietEntry> plan) {
     _diets[patientId] = {for (final e in plan.entries) e.key: e.value.copy()};
@@ -119,7 +301,10 @@ class AppState extends ChangeNotifier {
   }
 
   // ---- Ações: perfil ----
-  void saveProfile(Role r, ProfileInfo p) { profiles[r] = p; notifyListeners(); }
+  void saveProfile(Role r, ProfileInfo p) {
+    profiles[r] = p;
+    notifyListeners();
+  }
 
   bool setting(Role r, String key) => settings[r.name]![key] ?? false;
   void toggleSetting(Role r, String key) {
@@ -141,18 +326,22 @@ class AppState extends ChangeNotifier {
   }
 
   Map<String, dynamic> _toJson() => {
-        'authenticated': authenticated,
-        'role': role.name,
-        'water': water,
-        'foodLogs': foodLogs.map((e) => e.toJson()).toList(),
-        'glucoseLogs': glucoseLogs.map((e) => e.toJson()).toList(),
-        'medications': medications.map((e) => e.toJson()).toList(),
-        'patients': patients.map((e) => e.toJson()).toList(),
-        'diets': _diets.map((k, v) => MapEntry('$k', v.map((mk, e) => MapEntry(mk, e.toJson())))),
-        'profiles': {for (final e in profiles.entries) e.key.name: e.value.toJson()},
-        'settings': settings,
-        'notif': notif.toJson(),
-      };
+    'authenticated': authenticated,
+    'role': role.name,
+    'water': water,
+    'foodLogs': foodLogs.map((e) => e.toJson()).toList(),
+    'glucoseLogs': glucoseLogs.map((e) => e.toJson()).toList(),
+    'medications': medications.map((e) => e.toJson()).toList(),
+    'patients': patients.map((e) => e.toJson()).toList(),
+    'diets': _diets.map(
+      (k, v) => MapEntry('$k', v.map((mk, e) => MapEntry(mk, e.toJson()))),
+    ),
+    'profiles': {
+      for (final e in profiles.entries) e.key.name: e.value.toJson(),
+    },
+    'settings': settings,
+    'notif': notif.toJson(),
+  };
 
   void _restore() {
     final raw = _prefs?.getString(_storageKey);
@@ -164,32 +353,62 @@ class AppState extends ChangeNotifier {
       water = (j['water'] as num?)?.toDouble() ?? water;
 
       List<T> list<T>(String k, T Function(Map<String, dynamic>) f) =>
-          (j[k] as List).map((e) => f(Map<String, dynamic>.from(e as Map))).toList();
+          (j[k] as List)
+              .map((e) => f(Map<String, dynamic>.from(e as Map)))
+              .toList();
 
-      if (j['foodLogs'] != null) { foodLogs..clear()..addAll(list('foodLogs', FoodLog.fromJson)); }
-      if (j['glucoseLogs'] != null) { glucoseLogs..clear()..addAll(list('glucoseLogs', GlucoseLog.fromJson)); }
-      if (j['medications'] != null) { medications..clear()..addAll(list('medications', Medication.fromJson)); }
-      if (j['patients'] != null) { patients..clear()..addAll(list('patients', Patient.fromJson)); }
+      if (j['foodLogs'] != null) {
+        foodLogs
+          ..clear()
+          ..addAll(list('foodLogs', FoodLog.fromJson));
+      }
+      if (j['glucoseLogs'] != null) {
+        glucoseLogs
+          ..clear()
+          ..addAll(list('glucoseLogs', GlucoseLog.fromJson));
+      }
+      if (j['medications'] != null) {
+        medications
+          ..clear()
+          ..addAll(list('medications', Medication.fromJson));
+      }
+      if (j['patients'] != null) {
+        patients
+          ..clear()
+          ..addAll(list('patients', Patient.fromJson));
+      }
 
       (j['diets'] as Map?)?.forEach((k, v) {
         _diets[int.parse(k as String)] = {
-          for (final e in (v as Map).entries) e.key as String: DietEntry.fromJson(Map<String, dynamic>.from(e.value as Map)),
+          for (final e in (v as Map).entries)
+            e.key as String: DietEntry.fromJson(
+              Map<String, dynamic>.from(e.value as Map),
+            ),
         };
       });
       final pr = j['profiles'] as Map?;
       if (pr != null) {
         for (final r in Role.values) {
           final v = pr[r.name];
-          if (v != null) profiles[r] = ProfileInfo.fromJson(Map<String, dynamic>.from(v as Map));
+          if (v != null)
+            profiles[r] = ProfileInfo.fromJson(
+              Map<String, dynamic>.from(v as Map),
+            );
         }
       }
       final st = j['settings'] as Map?;
       if (st != null) {
         for (final e in st.entries) {
-          settings[e.key as String] = {for (final x in (e.value as Map).entries) x.key as String: x.value == true};
+          settings[e.key as String] = {
+            for (final x in (e.value as Map).entries)
+              x.key as String: x.value == true,
+          };
         }
       }
-      if (j['notif'] != null) notif = NotificationPrefs.fromJson(Map<String, dynamic>.from(j['notif'] as Map));
+      if (j['notif'] != null)
+        notif = NotificationPrefs.fromJson(
+          Map<String, dynamic>.from(j['notif'] as Map),
+        );
     } catch (_) {
       // dado salvo inválido: ignora e usa os valores padrão
     }
